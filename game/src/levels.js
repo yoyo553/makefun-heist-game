@@ -90,7 +90,9 @@ export const GALLERIES = [
     name: "Gallery III — The Meridian Vault",
     intro: "$90,000 or the night is wasted. The big vault sings while it opens — be quick.",
     quota: 90000, empCharges: 3,
-    start: { y: 360, x: 128 },
+    // Start tucked beside the van, out of the west camera's first frame:
+    // the old spot stood on the runner right in that camera's face.
+    start: { y: 300, x: 96 },
     van: { h: 84, w: 64, y: 318, x: 26 },
     vault: { crackSeconds: 3.5, value: 80000, name: "THE MERIDIAN VAULT", h: 64, w: 200, y: 30, x: 540 },
     carpets: [ // the long runner to the big vault
@@ -121,7 +123,7 @@ export const GALLERIES = [
     guards: [
       { path: [[220, 140], [1060, 140]] },
       { path: [[1060, 430], [220, 430]] },
-      { sweep: true, path: [[640, 190]] },
+      { path: [[640, 190]] },
     ],
     cameras: [
       { facing: Math.PI * 0.5, y: 120, x: 640 },

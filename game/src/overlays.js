@@ -89,7 +89,7 @@ export function paintCameraSweeps(c, state) {
 // any warden the ring touches is already on their way to look.
 export function paintDrillHalo(c, state) {
   const safe = state.vault;
-  if (safe.cracked || safe.progress <= 0) return;
+  if (!safe.drilling) return;
   const cx = safe.x + safe.w / 2;
   const cy = safe.y + safe.h;
   c.save();
@@ -142,7 +142,7 @@ export function paintThiefTag(c, state) {
   if (state.anyoneSees) doing = "IN SIGHT!";
   else if (state.cameraSees) doing = "ON CAMERA!";
   else if (state.grabIndex > -1) doing = "LIFTING…";
-  else if (state.vault.progress > 0 && !state.vault.cracked) doing = "DRILLING…";
+  else if (state.vault.drilling) doing = "DRILLING…";
   else if (t.moving && t.tiptoe) doing = "SNEAKING";
   else if (t.moving) doing = "WALKING — LOUD";
   const label = `YOU · ${doing}`;

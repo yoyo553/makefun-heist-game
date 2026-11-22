@@ -138,7 +138,7 @@ export function createWorld(random) {
     state.guards = state.gallery.guards.map((spec) => buildWarden(state.gallery, spec, random));
     state.cameras = state.gallery.cameras.map((spec) => buildCamera(spec, random));
     state.loot = state.gallery.loot.map((spec) => ({ ...spec, progress: 0, taken: false }));
-    state.vault = { ...state.gallery.vault, progress: 0, humTimer: 0, cracked: false };
+    state.vault = { ...state.gallery.vault, progress: 0, humTimer: 0, cracked: false, drilling: false };
     state.coins = [];
     state.ripples = [];
   }
@@ -248,8 +248,12 @@ export function createWorld(random) {
     // The vault works the same way, slower and louder: the drill hums
     // once a second, and the hum calls wardens from further away.
     const safe = state.vault;
+    // "Drilling" lasts only while the thief stands at the vault working
+    // it; progress left behind on a half-cracked vault is not drilling.
+    safe.drilling = false;
     if (!safe.cracked) {
       const atSafe = !t.moving && withinPad(t.x, t.y, safe, GRAB.reach);
+      safe.drilling = atSafe;
       if (atSafe) {
         safe.progress += dt;
         safe.humTimer += dt;
@@ -263,6 +267,7 @@ export function createWorld(random) {
         }
         if (safe.progress >= safe.crackSeconds) {
           safe.cracked = true;
+          safe.drilling = false;
           state.take += safe.value;
           state.stats.grabs += 1;
           events |= EVENT_VAULT;
@@ -348,8 +353,14 @@ export function createWorld(random) {
       if (dist > 10 && warden.lookTimer <= 0) {
         warden.facing = turnToward(warden.facing, Math.atan2(dy, dx), HEAD_TURN * dt);
         const moved = slideMove(state.solids, warden.x, warden.y, GUARD.radius, (dx / dist) * GUARD.investigateSpeed * dt, (dy / dist) * GUARD.investigateSpeed * dt);
+        const stepped = Math.hypot(moved.y - warden.y, moved.x - warden.x);
         warden.x = moved.x;
         warden.y = moved.y;
+        // A coin can land past a case or a wall, where no route leads:
+        // if the step barely moved the warden, stop pushing against the
+        // obstacle and treat this spot as the arrival — the look-around
+        // below then runs, and patrol resumes from here.
+        if (stepped < GUARD.investigateSpeed * dt * 0.2) warden.lookTimer = dt;
       } else {
         // Arrived: look around a while, then give up and rejoin the
         // route at its nearest stop.
@@ -411,8 +422,10 @@ export function createWorld(random) {
     for (const warden of state.guards) events = tendWarden(dt, warden, events);
     // The meter cools only while nobody watches and the drill is
     // silent — the drill's hum feeds it, so the two never cancel out.
-    const drilling = state.vault.progress > 0;
-    if (!state.anyoneSees && !state.cameraSees && !drilling) {
+    // Silence is judged by the drilling flag, not by leftover progress:
+    // progress bleeds away slowly after the thief leaves the vault, and
+    // it must not hold the meter up once the drilling itself has stopped.
+    if (!state.anyoneSees && !state.cameraSees && !state.vault.drilling) {
       state.alarm = Math.max(0, state.alarm - ALARM.decayRate * dt);
     }
     for (const ring of state.ripples) {

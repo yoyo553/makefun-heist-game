@@ -186,8 +186,8 @@ function runGame() {
       };
       const events = world.step(STEP, plan);
       handleEvents(events);
-      // The drill throbs while the vault is being worked.
-      if (world.state.vault.progress > 0 && !world.state.vault.cracked) {
+      // The drill throbs only while the thief stands at the vault.
+      if (world.state.vault.drilling) {
         crackTimer = crackTimer - STEP;
         if (0 >= crackTimer) {
           crackTimer = 28 / 100;
