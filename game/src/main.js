@@ -6,9 +6,9 @@
 // unbanked take, because a gallery's take joins the haul only when the van
 // is reached.
 // ---
-// ?seed=N pins the guards' small timing variations. ?shot=start, loot,
-// alarm or end (with &seed=N) stages that scene instead of running the
-// loop, paints it twice, and sets window.__shotReady for a screenshot.
+// ?seed=N pins the guards' small timing variations. ?shot=cover, vault,
+// emp, alarm or end (with &seed=N) stages that scene instead of running
+// the loop, paints it twice, and sets window.__shotReady for a screenshot.
 
 import { BEST_KEY, STEP } from "./config.js";
 import { createRandom } from "./random.js";
@@ -92,6 +92,7 @@ function runGame() {
     out.best = best;
     out.maxTake = NIGHT_MAX;
     out.roomAge = roomAge;
+    out.callouts = null; // only the staged screenshot scenes speak
     out.mouse = screen === VIEW_PLAY ? input.mouse() : null;
     return out;
   }

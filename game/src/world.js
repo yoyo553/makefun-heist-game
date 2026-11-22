@@ -1,12 +1,12 @@
-// The simulation: one gallery of the Meridian Museum, advanced in fixed
-// slices. The thief creeps or tiptoes between display cases, lifts loot by
-// standing at a case, cracks the vault by standing at it while its drill
-// hums, tosses decoy coins to draw guards away, and spends EMP charges to
-// black out the cameras — at a price, because every surge, snatch and second
-// spent in plain sight feeds the one alarm meter. Fill the meter and the job
-// is blown; reach the van with the quota met and the gallery is done. Nothing
-// in here knows about screens or pixels: main.js owns the screens, render.js
-// owns the drawing.
+// The simulation of one gallery, advanced in fixed slices of time.
+// The thief walks or tiptoes between the display cases, lifts a piece
+// by standing at it, works the vault's drill by standing at the vault,
+// tosses decoy coins to pull wardens off their routes, and burns EMP
+// charges to darken the cameras. Every one of those acts feeds the
+// single alarm meter — sight, snatches, drill hum, EMP surges — and a
+// full meter blows the job, while the van only leaves once the fence's
+// quota is in the bag. This file knows nothing of screens or pixels:
+// main.js owns the screens, render.js owns the drawing.
 
 import { VISION, THIEF, GUARD, GRAB, FIELD, COIN, CAMERA, ALARM } from "./config.js";
 import { GALLERIES } from "./levels.js";
@@ -23,58 +23,58 @@ export const EVENT_BLOWN = 1 << 7;
 export const EVENT_ESCAPED = 1 << 8;
 export const EVENT_DENIED = 1 << 9;
 
-// How far from the room's edge a walker stays.
-const MARGIN = 24;
+// Walkers keep this far from the room's edge.
+const EDGE = 24;
 
-// How fast a guard turns its head, radians per second, tracking or sweeping.
-const TURN_RATE = 2.6;
+// How fast a head turns, in radians a second, tracking or sweeping.
+const HEAD_TURN = 2.6;
 
-// Does a circle at (x, y) touch any solid rectangle (grown by the radius)?
-function hitsSolid(solids, x, y, radius) {
-  return solids.some((rect) => {
+// Does a circle at (x, y) overlap any solid rectangle, grown by radius?
+function touchesSolid(solids, x, y, radius) {
+  for (const rect of solids) {
     const nearX = Math.max(rect.x, Math.min(x, rect.x + rect.w));
     const nearY = Math.max(rect.y, Math.min(y, rect.y + rect.h));
     const dx = x - nearX;
     const dy = y - nearY;
-    return dx * dx + dy * dy < radius * radius;
-  });
+    if (dx * dx + dy * dy < radius * radius) return true;
+  }
+  return false;
 }
 
-// Shift a circle by (dx, dy), sliding along solids and the room's walls.
-function slide(solids, x, y, radius, dx, dy) {
-  const clampedX = Math.max(MARGIN + radius, Math.min(FIELD.width - MARGIN - radius, x + dx));
-  const nx = hitsSolid(solids, clampedX, y, radius) ? x : clampedX;
-  const clampedY = Math.max(MARGIN + radius, Math.min(FIELD.height - MARGIN - radius, y + dy));
-  const ny = hitsSolid(solids, nx, clampedY, radius) ? y : clampedY;
+// Move a circle by (dx, dy), sliding along solids and the room's walls.
+function slideMove(solids, x, y, radius, dx, dy) {
+  const wantX = Math.max(EDGE + radius, Math.min(FIELD.width - EDGE - radius, x + dx));
+  const nx = touchesSolid(solids, wantX, y, radius) ? x : wantX;
+  const wantY = Math.max(EDGE + radius, Math.min(FIELD.height - EDGE - radius, y + dy));
+  const ny = touchesSolid(solids, nx, wantY, radius) ? y : wantY;
   return { x: nx, y: ny };
 }
 
-// Is a point inside a rectangle padded by `pad` on every side?
-function insidePadded(x, y, rect, pad) {
-  const left = rect.x - pad;
-  const right = rect.x + rect.w + pad;
-  const top = rect.y - pad;
-  const bottom = rect.y + rect.h + pad;
-  return x > left && x < right && y > top && y < bottom;
+// Is (x, y) inside a rectangle grown by pad on every side?
+function withinPad(x, y, rect, pad) {
+  return x > rect.x - pad && x < rect.x + rect.w + pad && y > rect.y - pad && y < rect.y + rect.h + pad;
 }
 
-function makeGuard(gallery, spec, random) {
-  const start = spec.path[0];
+// A warden from its gallery spec. A one-point path makes a sentinel,
+// which stands at its post and sweeps its gaze around a home bearing
+// aimed away from the vault it watches over.
+function buildWarden(gallery, spec, random) {
+  const post = spec.path[0];
   const sentinel = spec.path.length === 1;
-  const vaultX = gallery.vault.x + gallery.vault.w / 2;
-  const vaultY = gallery.vault.y + gallery.vault.h / 2;
-  let home;
-  if (sentinel) home = Math.atan2(start[1] - vaultY, start[0] - vaultX);
-  else home = Math.atan2(spec.path[1][1] - start[1], spec.path[1][0] - start[0]);
-  const guard = {
-    x: start[0],
-    y: start[1],
+  const vaultMidX = gallery.vault.x + gallery.vault.w / 2;
+  const vaultMidY = gallery.vault.y + gallery.vault.h / 2;
+  const home = sentinel
+    ? Math.atan2(post[1] - vaultMidY, post[0] - vaultMidX)
+    : Math.atan2(spec.path[1][1] - post[1], spec.path[1][0] - post[0]);
+  return {
+    x: post[0],
+    y: post[1],
     facing: home,
     homeFacing: home,
-    sentinel: sentinel,
+    sentinel,
     path: spec.path,
     speed: spec.speed != null ? spec.speed : GUARD.patrolSpeed,
-    pathIndex: sentinel === true ? 0 : 1,
+    pathIndex: sentinel ? 0 : 1,
     mode: "patrol",
     pauseTimer: 0,
     lookTimer: 0,
@@ -85,11 +85,11 @@ function makeGuard(gallery, spec, random) {
     sweepSeed: random() * 2 * Math.PI,
     wasWary: false,
   };
-  return guard;
 }
 
-function makeCamera(spec, random) {
-  const cam = {
+// A camera from its spec: a base bearing it sweeps around.
+function buildCamera(spec, random) {
+  return {
     x: spec.x,
     y: spec.y,
     baseFacing: spec.facing,
@@ -98,7 +98,6 @@ function makeCamera(spec, random) {
     locksOn: false,
     sweepSeed: random() * 2 * Math.PI,
   };
-  return cam;
 }
 
 export function createWorld(random) {
@@ -118,310 +117,322 @@ export function createWorld(random) {
     state.galleryIndex = galleryIndex;
     state.gallery = GALLERIES[galleryIndex];
     state.solids = state.gallery.cover.concat(state.gallery.vault);
-    const walls = state.solids;
-    state.segments = buildSegments(walls);
-    state.time = state.alarm = state.take = 0;
+    state.segments = buildSegments(state.solids);
+    state.time = 0;
+    state.alarm = 0;
+    state.take = 0;
     state.vanHint = 0;
-    state.empCharges = state.gallery["empCharges"];
-    state.throwCooldown = 0.0;
-    state.grabIndex = 0 - 1;
-    state.blown = state.escaped = false;
-    state.anyoneSees = state.cameraSees = false;
+    state.empCharges = state.gallery.empCharges;
+    state.throwCooldown = 0;
+    state.grabIndex = -1;
+    state.blown = false;
+    state.escaped = false;
+    state.anyoneSees = false;
+    state.cameraSees = false;
     const start = state.gallery.start;
     state.thief.x = start.x;
     state.thief.y = start.y;
-    state.thief.tiptoe = state.thief.moving = false;
-    state.thief.stepTimer = 0.0;
-    state.guards = state.gallery.guards.map((spec) => makeGuard(state.gallery, spec, random));
-    state.cameras = state.gallery.cameras.map((spec) => makeCamera(spec, random));
+    state.thief.tiptoe = false;
+    state.thief.moving = false;
+    state.thief.stepTimer = 0;
+    state.guards = state.gallery.guards.map((spec) => buildWarden(state.gallery, spec, random));
+    state.cameras = state.gallery.cameras.map((spec) => buildCamera(spec, random));
     state.loot = state.gallery.loot.map((spec) => ({ ...spec, progress: 0, taken: false }));
     state.vault = { ...state.gallery.vault, progress: 0, humTimer: 0, cracked: false };
     state.coins = [];
     state.ripples = [];
   }
 
-  function summonGuards(x, y, radius) {
-    state.guards.forEach((guard) => {
-      if (Math.hypot(x - guard.x, y - guard.y) > radius) return;
-      if (guard.seesThief && guard.awareness > VISION.stareAt) return;
-      guard.mode = "investigate";
-      guard.target = { x: x, y: y };
-      guard.lookTimer = 0;
-    });
+  // Send every warden within radius of (x, y) to look at that spot —
+  // unless one is already staring the thief down.
+  function callWardens(x, y, radius) {
+    for (const warden of state.guards) {
+      if (Math.hypot(x - warden.x, y - warden.y) > radius) continue;
+      if (warden.seesThief && warden.awareness > VISION.stareAt) continue;
+      warden.mode = "investigate";
+      warden.target = { x, y };
+      warden.lookTimer = 0;
+    }
   }
 
-  function raiseAlarm(amount) {
-    const next = state.alarm + amount;
-    state.alarm = next > 1 ? 1 : next;
+  function addAlarm(amount) {
+    state.alarm = Math.min(1, state.alarm + amount);
   }
 
-  function walkThief(dt, input, events) {
+  function moveThief(dt, input, events) {
     const t = state.thief;
     t.tiptoe = !!input.tiptoe;
-    const length = Math.hypot(input.moveY, input.moveX);
-    t.moving = 0.01 < length;
+    const len = Math.hypot(input.moveY, input.moveX);
+    t.moving = len > 0.01;
     if (t.moving) {
       const speed = t.tiptoe ? THIEF.tiptoeSpeed : THIEF.walkSpeed;
-      const norm = Math.max(1, length);
-      const dx = (input.moveX / norm) * speed * dt;
-      const dy = (input.moveY / norm) * speed * dt;
-      const moved = slide(state.solids, t.x, t.y, THIEF.radius, dx, dy);
-      t.x = moved.x;
-      t.y = moved.y;
+      const norm = Math.max(1, len);
+      const stepX = (input.moveX / norm) * speed * dt;
+      const stepY = (input.moveY / norm) * speed * dt;
+      const landed = slideMove(state.solids, t.x, t.y, THIEF.radius, stepX, stepY);
+      t.x = landed.x;
+      t.y = landed.y;
       t.faceX = input.moveX / norm;
       t.faceY = input.moveY / norm;
-      if (t.tiptoe === false) {
-        t.stepTimer = t.stepTimer - dt;
-        if (0 >= t.stepTimer) {
+      if (!t.tiptoe) {
+        // Walking feet are heard: each step rings a small circle and
+        // calls any warden standing inside it.
+        t.stepTimer -= dt;
+        if (t.stepTimer <= 0) {
           t.stepTimer = THIEF.stepInterval;
           state.ripples.push({ kind: "step", life: 0.55, age: 0, maxR: THIEF.stepNoiseRadius, r: 8, y: t.y, x: t.x });
-          summonGuards(t.x, t.y, THIEF.stepNoiseRadius);
+          callWardens(t.x, t.y, THIEF.stepNoiseRadius);
           events |= EVENT_STEP;
         }
       }
     }
-    const cooled = state.throwCooldown - dt;
-    state.throwCooldown = cooled > 0 ? cooled : 0;
-    if (input.throwAt != null && 0 >= state.throwCooldown) {
+    state.throwCooldown = Math.max(0, state.throwCooldown - dt);
+    if (input.throwAt != null && state.throwCooldown <= 0) {
+      // A decoy coin, thrown toward the click and clamped to range.
       const dx = input.throwAt.x - t.x;
       const dy = input.throwAt.y - t.y;
       const dist = Math.hypot(dy, dx);
-      const scale = dist <= COIN.throwRange ? 1 : COIN.throwRange / dist;
-      state.coins.push({ landed: false, t: 0, y: t.y + dy * scale, x: t.x + dx * scale, fromY: t.y, fromX: t.x });
-      state.throwCooldown = COIN["cooldown"];
-      state.stats.throws = state.stats.throws + 1;
+      const reach = dist <= COIN.throwRange ? 1 : COIN.throwRange / dist;
+      state.coins.push({ landed: false, t: 0, y: t.y + dy * reach, x: t.x + dx * reach, fromY: t.y, fromX: t.x });
+      state.throwCooldown = COIN.cooldown;
+      state.stats.throws += 1;
       events |= EVENT_THROW;
     }
-    if (input.emp === true && 0 < state.empCharges) {
-      state.empCharges = state.empCharges - 1;
-      state.stats.empsUsed = state.stats.empsUsed + 1;
-      state.cameras.forEach((camera) => { camera.disabled = CAMERA.disableSeconds; });
-      raiseAlarm(ALARM.empBump);
+    if (input.emp === true && state.empCharges > 0) {
+      // The EMP: every camera dark for a few seconds, at a surge.
+      state.empCharges -= 1;
+      state.stats.empsUsed += 1;
+      for (const cam of state.cameras) cam.disabled = CAMERA.disableSeconds;
+      addAlarm(ALARM.empBump);
       events |= EVENT_EMP;
     }
-    const van = state.gallery["van"];
-    if (insidePadded(t.x, t.y, van, 0)) {
-      if (state.gallery.quota <= state.take) {
-        state.escaped = true; events |= EVENT_ESCAPED;
-      } else if (0 >= state.vanHint) {
-        state.vanHint = 2.20;
+    const van = state.gallery.van;
+    if (withinPad(t.x, t.y, van, 0)) {
+      if (state.take >= state.gallery.quota) {
+        state.escaped = true;
+        events |= EVENT_ESCAPED;
+      } else if (state.vanHint <= 0) {
+        state.vanHint = 2.2;
         events |= EVENT_DENIED;
       }
     }
-    return events | 0;
+    return events;
   }
 
-  function workLoot(dt, events) {
+  function tendLoot(dt, events) {
     const t = state.thief;
-    let active = 0 - 1;
-    if (t.moving === false) {
-      for (let i = 0; i < state.loot.length; i++) {
-        const piece = state.loot.at(i);
-        if (piece.taken === false && insidePadded(t.x, t.y, piece, GRAB.reach)) {
-          active = +i; break;
-        }
+    // Standing still beside an untaken piece starts the lift.
+    let active = -1;
+    if (!t.moving) {
+      for (let i = 0; i < state.loot.length; i += 1) {
+        const piece = state.loot[i];
+        if (!piece.taken && withinPad(t.x, t.y, piece, GRAB.reach)) { active = i; break; }
       }
     }
-    state.grabIndex = active | 0;
-    for (let i = 0; i < state.loot.length; i++) {
-      const piece = state.loot.at(i);
+    state.grabIndex = active;
+    for (let i = 0; i < state.loot.length; i += 1) {
+      const piece = state.loot[i];
       if (piece.taken) continue;
-      if (active === i) {
-        piece.progress = piece.progress + dt;
-        if (piece.progress >= GRAB.seconds) {
-          piece.taken = true;
-          state.take = state.take + piece.value;
-          state.stats.grabs = state.stats.grabs + 1;
-          raiseAlarm(ALARM.grabBump);
-          state.ripples.push({ kind: "ping", life: 0.5, age: 0, maxR: 90, r: 8, y: t.y, x: t.x });
-          summonGuards(t.x, t.y, 90);
-          events |= EVENT_GRAB;
-        }
-      } else {
-        piece.progress = 0;
+      if (i !== active) { piece.progress = 0; continue; }
+      piece.progress += dt;
+      if (piece.progress >= GRAB.seconds) {
+        piece.taken = true;
+        state.take += piece.value;
+        state.stats.grabs += 1;
+        addAlarm(ALARM.grabBump);
+        state.ripples.push({ kind: "ping", life: 0.5, age: 0, maxR: 90, r: 8, y: t.y, x: t.x });
+        callWardens(t.x, t.y, 90);
+        events |= EVENT_GRAB;
       }
     }
-    // The vault: standing at it works the drill, and the drill hums.
+    // The vault works the same way, slower and louder: the drill hums
+    // once a second, and the hum calls wardens from further away.
     const safe = state.vault;
-    if (safe.cracked === false) {
-      if (t.moving === false && insidePadded(t.x, t.y, safe, GRAB.reach)) {
-        safe.progress = safe.progress + dt;
-        safe.humTimer = safe.humTimer + dt;
-        raiseAlarm(ALARM.crackRate * dt);
+    if (!safe.cracked) {
+      const atSafe = !t.moving && withinPad(t.x, t.y, safe, GRAB.reach);
+      if (atSafe) {
+        safe.progress += dt;
+        safe.humTimer += dt;
+        addAlarm(ALARM.crackRate * dt);
         if (safe.humTimer >= 1) {
           safe.humTimer = 0;
-          state.ripples.push({ kind: "ping", life: 0.6, age: 0, maxR: 130, r: 10, y: safe.y + safe.h, x: safe.x + safe.w / 2 });
-          summonGuards(safe.x + safe.w / 2, safe.y + safe.h, 130);
+          const humX = safe.x + safe.w / 2;
+          const humY = safe.y + safe.h;
+          state.ripples.push({ kind: "ping", life: 0.6, age: 0, maxR: 130, r: 10, y: humY, x: humX });
+          callWardens(humX, humY, 130);
         }
         if (safe.progress >= safe.crackSeconds) {
           safe.cracked = true;
-          state.take = state.take + safe.value;
-          state.stats.grabs = state.stats.grabs + 1;
+          state.take += safe.value;
+          state.stats.grabs += 1;
           events |= EVENT_VAULT;
         }
       } else {
-        const decayed = safe.progress - dt * 0.5;
-        safe.progress = decayed > 0 ? decayed : 0;
+        safe.progress = Math.max(0, safe.progress - dt * 0.5);
         safe.humTimer = 0;
       }
     }
-    return events | 0;
+    return events;
   }
 
-  function flyCoins(dt, events) {
-    state.coins.forEach((coin) => {
-      if (coin.landed) return;
-      coin.t = coin.t + dt;
-      if (COIN.flightSeconds <= coin.t) {
+  function advanceCoins(dt, events) {
+    for (const coin of state.coins) {
+      if (coin.landed) continue;
+      coin.t += dt;
+      if (coin.t >= COIN.flightSeconds) {
+        // The clink lands: a wide ring, and wardens come to look.
         state.ripples.push({ kind: "ping", life: 0.8, age: 0, maxR: COIN.noiseRadius, r: 10, y: coin.y, x: coin.x });
-        summonGuards(coin.x, coin.y, COIN.noiseRadius);
-        coin["landed"] = true;
+        callWardens(coin.x, coin.y, COIN.noiseRadius);
+        coin.landed = true;
         events |= EVENT_PING;
       }
-    });
-    state.coins = state.coins.filter((coin) => coin.landed === false || coin.t < COIN.flightSeconds + 0.8);
-    return events | 0;
+    }
+    state.coins = state.coins.filter((coin) => !coin.landed || coin.t < COIN.flightSeconds + 0.8);
+    return events;
   }
 
-  function seeHowWell(thief, x, y, facing, range, halfAngle) {
+  // How strongly an eye at (x, y) holds the thief: nothing outside the
+  // cone or behind cover, more the closer the thief stands.
+  function sightStrength(thief, x, y, facing, range, halfAngle) {
     const dist = Math.hypot(thief.y - y, thief.x - x);
-    if (range < dist) return 0;
+    if (dist > range) return 0;
     const bearing = Math.atan2(thief.y - y, thief.x - x);
-    if (halfAngle < Math.abs(angleDifference(facing, bearing))) return 0;
-    if (lineOfSight(x, y, thief.x, thief.y, state.segments) === false) return 0;
+    if (Math.abs(angleDifference(facing, bearing)) > halfAngle) return 0;
+    if (!lineOfSight(x, y, thief.x, thief.y, state.segments)) return 0;
     const closeness = 1.25 - dist / range;
-    if (closeness < 0.3) return 0.3;
-    if (closeness > 1.15) return 1.15;
-    return closeness;
+    return Math.max(0.3, Math.min(1.15, closeness));
   }
 
-  function watchCamera(dt, camera) {
-    if (camera.disabled > 0) {
-      camera.disabled = camera.disabled - dt;
-      camera["locksOn"] = false;
-    } else {
-      camera.facing = camera.baseFacing + CAMERA.sweepAngle * Math.sin(state.time * CAMERA.sweepSpeed + camera.sweepSeed);
-      const scale = seeHowWell(state.thief, camera.x, camera.y, camera.facing, CAMERA.range, CAMERA.halfAngle);
-      camera.locksOn = 0 < scale;
-      if (camera.locksOn) {
-        state["cameraSees"] = true;
-        raiseAlarm(dt * ALARM.cameraFill * scale * (state.thief.tiptoe ? 0.6 : 1));
-      }
+  function tendCamera(dt, cam) {
+    if (cam.disabled > 0) {
+      cam.disabled -= dt;
+      cam.locksOn = false;
+      return;
+    }
+    cam.facing = cam.baseFacing + CAMERA.sweepAngle * Math.sin(state.time * CAMERA.sweepSpeed + cam.sweepSeed);
+    const strength = sightStrength(state.thief, cam.x, cam.y, cam.facing, CAMERA.range, CAMERA.halfAngle);
+    cam.locksOn = strength > 0;
+    if (cam.locksOn) {
+      state.cameraSees = true;
+      addAlarm(dt * ALARM.cameraFill * strength * (state.thief.tiptoe ? 0.6 : 1));
     }
   }
 
-  function watchGuard(dt, guard, events) {
+  function tendWarden(dt, warden, events) {
     const t = state.thief;
-    const scale = seeHowWell(t, guard.x, guard.y, guard.facing, VISION.range, VISION.halfAngle);
-    guard.seesThief = 0 < scale;
-    if (guard.seesThief === true) {
-      guard.unseenTimer = 0; state.anyoneSees = true;
-      const gain = dt * 0.85 * scale * (t.tiptoe ? 0.5 : 1);
-      const grown = guard.awareness + gain;
-      guard.awareness = grown > 1 ? 1 : grown;
-      raiseAlarm(dt * ALARM.guardFill * scale * (t.tiptoe ? 0.5 : 1));
+    const strength = sightStrength(t, warden.x, warden.y, warden.facing, VISION.range, VISION.halfAngle);
+    warden.seesThief = strength > 0;
+    if (warden.seesThief) {
+      warden.unseenTimer = 0;
+      state.anyoneSees = true;
+      const gain = dt * 0.85 * strength * (t.tiptoe ? 0.5 : 1);
+      warden.awareness = Math.min(1, warden.awareness + gain);
+      addAlarm(dt * ALARM.guardFill * strength * (t.tiptoe ? 0.5 : 1));
     } else {
-      guard.unseenTimer = guard.unseenTimer + dt;
-      if (guard.unseenTimer > 0.8) {
-        const faded = guard.awareness - dt * 0.3;
-        guard.awareness = faded < 0 ? 0 : faded;
-      }
+      warden.unseenTimer += dt;
+      if (warden.unseenTimer > 0.8) warden.awareness = Math.max(0, warden.awareness - dt * 0.3);
     }
-    const wary = VISION.stareAt <= guard.awareness;
-    if (wary && guard.wasWary === false) events |= EVENT_WARY;
-    guard.wasWary = !!wary;
+    const waryNow = warden.awareness >= VISION.stareAt;
+    if (waryNow && !warden.wasWary) events |= EVENT_WARY;
+    warden.wasWary = waryNow;
 
-    if (guard.seesThief === true && wary) {
-      guard.facing = turnToward(guard.facing, Math.atan2(t.y - guard.y, t.x - guard.x), TURN_RATE * dt);
-      return events | 0;
+    if (warden.seesThief && waryNow) {
+      // Sure enough to stop and stare: the head tracks the thief.
+      warden.facing = turnToward(warden.facing, Math.atan2(t.y - warden.y, t.x - warden.x), HEAD_TURN * dt);
+      return events;
     }
-    if (guard.mode === "investigate" && guard.target !== null) {
-      const dx = -guard.x + guard.target.x;
-      const dy = -guard.y + guard.target.y;
+    if (warden.mode === "investigate" && warden.target !== null) {
+      const dx = warden.target.x - warden.x;
+      const dy = warden.target.y - warden.y;
       const dist = Math.hypot(dy, dx);
-      if (10 < dist && 0 >= guard.lookTimer) {
-        guard.facing = turnToward(guard.facing, Math.atan2(dy, dx), TURN_RATE * dt);
-        const moved = slide(state.solids, guard.x, guard.y, GUARD.radius, (dx / dist) * GUARD.investigateSpeed * dt, (dy / dist) * GUARD.investigateSpeed * dt);
-        Object.assign(guard, { x: moved.x, y: moved.y });
+      if (dist > 10 && warden.lookTimer <= 0) {
+        warden.facing = turnToward(warden.facing, Math.atan2(dy, dx), HEAD_TURN * dt);
+        const moved = slideMove(state.solids, warden.x, warden.y, GUARD.radius, (dx / dist) * GUARD.investigateSpeed * dt, (dy / dist) * GUARD.investigateSpeed * dt);
+        warden.x = moved.x;
+        warden.y = moved.y;
       } else {
-        guard.lookTimer = guard.lookTimer + dt;
-        guard.facing = guard.facing + Math.sin(state.time * 1.7 + guard.sweepSeed) * 1.4 * dt;
-        if (guard.lookTimer > 1.6) {
-          guard.mode = "patrol";
-          guard["target"] = null;
-          guard.lookTimer *= 0;
-          let nearest = 0, nearestDist = Infinity;
-          guard.path.forEach((point, index) => {
-            const d = Math.hypot(point[1] - guard.y, point[0] - guard.x);
-            if (nearestDist > d) {
-              nearestDist = d; nearest = index;
-            }
+        // Arrived: look around a while, then give up and rejoin the
+        // route at its nearest stop.
+        warden.lookTimer += dt;
+        warden.facing += Math.sin(state.time * 1.7 + warden.sweepSeed) * 1.4 * dt;
+        if (warden.lookTimer > 1.6) {
+          warden.mode = "patrol";
+          warden.target = null;
+          warden.lookTimer = 0;
+          let nearest = 0;
+          let nearestDist = Infinity;
+          warden.path.forEach((point, index) => {
+            const d = Math.hypot(point[1] - warden.y, point[0] - warden.x);
+            if (d < nearestDist) { nearestDist = d; nearest = index; }
           });
-          guard.pathIndex = nearest | 0;
+          warden.pathIndex = nearest;
         }
       }
-      return events | 0;
+      return events;
     }
-    if (guard.sentinel === true) {
-      guard.facing = guard.homeFacing + GUARD.sweepAngle * Math.sin(state.time * GUARD.sweepSpeed + guard.sweepSeed);
-      return events | 0;
+    if (warden.sentinel) {
+      warden.facing = warden.homeFacing + GUARD.sweepAngle * Math.sin(state.time * GUARD.sweepSpeed + warden.sweepSeed);
+      return events;
     }
-    if (0 < guard.pauseTimer) {
-      guard.pauseTimer = guard.pauseTimer - dt;
-      return events | 0;
+    if (warden.pauseTimer > 0) {
+      warden.pauseTimer -= dt;
+      return events;
     }
-    const target = guard.path.at(guard.pathIndex);
-    const dx = -guard.x + target[0];
-    const dy = -guard.y + target[1];
+    // Walk the route: turn toward the next stop, step, and on arrival
+    // pause a moment before setting off for the one after.
+    const stop = warden.path[warden.pathIndex];
+    const dx = stop[0] - warden.x;
+    const dy = stop[1] - warden.y;
     const dist = Math.hypot(dy, dx);
-    if (6 > dist) {
-      guard.pathIndex = (1 + guard.pathIndex) % guard.path.length;
-      guard.pauseTimer = GUARD.pauseSeconds * (0.3 * random() + 0.85);
-      return events | 0;
+    if (dist < 6) {
+      warden.pathIndex = (warden.pathIndex + 1) % warden.path.length;
+      warden.pauseTimer = GUARD.pauseSeconds * (0.85 + 0.3 * random());
+      return events;
     }
-    guard.facing = turnToward(guard.facing, Math.atan2(dy, dx), TURN_RATE * dt);
-    const moved = slide(state.solids, guard.x, guard.y, GUARD.radius, (dx / dist) * guard.speed * dt, (dy / dist) * guard.speed * dt);
-    Object.assign(guard, { x: moved.x, y: moved.y });
-    return events | 0;
+    warden.facing = turnToward(warden.facing, Math.atan2(dy, dx), HEAD_TURN * dt);
+    const moved = slideMove(state.solids, warden.x, warden.y, GUARD.radius, (dx / dist) * warden.speed * dt, (dy / dist) * warden.speed * dt);
+    warden.x = moved.x;
+    warden.y = moved.y;
+    return events;
   }
 
   function step(dt, input) {
     if (state.blown || state.escaped) return 0;
     let events = 0;
-    state.time = state.time + dt;
-    state.stats.time = state.stats.time + dt;
-    const hintLeft = state.vanHint - dt;
-    state.vanHint = hintLeft > 0 ? hintLeft : 0;
-    state.anyoneSees = state.cameraSees = false;
-    events = walkThief(dt, input, events);
-    events = workLoot(dt, events);
-    events = flyCoins(dt, events);
-    state.cameras.forEach((camera) => watchCamera(dt, camera));
-    state.guards.forEach((guard) => { events = watchGuard(dt, guard, events); });
-    // The alarm only cools while nobody watches and the drill is silent: the
-    // drill's own hum already feeds it, so it must not decay at the same time.
-    if (state.anyoneSees === false && state.cameraSees === false && 0 >= state.vault.progress) {
-      const cooled = state.alarm - ALARM.decayRate * dt;
-      state.alarm = cooled > 0 ? cooled : 0;
+    state.time += dt;
+    state.stats.time += dt;
+    state.vanHint = Math.max(0, state.vanHint - dt);
+    state.anyoneSees = false;
+    state.cameraSees = false;
+    events = moveThief(dt, input, events);
+    events = tendLoot(dt, events);
+    events = advanceCoins(dt, events);
+    for (const cam of state.cameras) tendCamera(dt, cam);
+    for (const warden of state.guards) events = tendWarden(dt, warden, events);
+    // The meter cools only while nobody watches and the drill is
+    // silent — the drill's hum feeds it, so the two never cancel out.
+    const drilling = state.vault.progress > 0;
+    if (!state.anyoneSees && !state.cameraSees && !drilling) {
+      state.alarm = Math.max(0, state.alarm - ALARM.decayRate * dt);
     }
-    state.ripples.forEach((ripple) => {
-      ripple.age = ripple.age + dt;
-      const grown = ripple.age / ripple.life;
-      ripple.r = ripple.maxR * (grown < 1 ? grown : 1);
-    });
-    state.ripples = state.ripples.filter((ripple) => ripple.life > ripple.age);
-    if (1 <= state.alarm && state.escaped === false) {
-      state.blown = true; events |= EVENT_BLOWN;
+    for (const ring of state.ripples) {
+      ring.age += dt;
+      ring.r = ring.maxR * Math.min(1, ring.age / ring.life);
     }
-    return events | 0;
+    state.ripples = state.ripples.filter((ring) => ring.age < ring.life);
+    if (state.alarm >= 1 && !state.escaped) {
+      state.blown = true;
+      events |= EVENT_BLOWN;
+    }
+    return events;
   }
 
-  // Let a caller set the gallery's state directly — the screenshot scenes in
-  // shots.js use this to pose their frames.
+  // Pose the state directly — the screenshot scenes in shots.js use
+  // this to set their frames before playing the rules forward.
   function stage(apply) {
     apply(state);
   }
 
-  reset(0.0);
-  return { state: state, reset: reset, step: step, stage: stage };
+  reset(0);
+  return { state, reset, step, stage };
 }
